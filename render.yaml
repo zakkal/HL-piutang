@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: hl-sales-app
+    runtime: node
+    rootDir: .
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SESSION_TIMEOUT_MINUTES
+        value: 15
+      - key: ALLOWED_ORIGINS
+        sync: false
