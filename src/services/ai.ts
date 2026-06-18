@@ -1,11 +1,50 @@
-// ─── AI Service using Gemini API ────────────────────────────────
-// Handles drafting payment reminders and answering business/financial queries.
+// ─── AI Service — OpenRouter (no quota limit) ───────────────
+// Chat & reminder pakai OpenRouter free tier (llama/mistral).
+// Ringkasan harian pakai rule-based engine, tanpa AI call sama sekali.
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabaseAdmin } from '../config/supabase';
 import { toNumber, D } from './financial';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+// ─── Helper: call OpenRouter ──────────────────────────────────
+async function callOpenRouter(systemPrompt: string, userPrompt: string): Promise<string> {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY belum dikonfigurasi di .env');
+  }
+
+  const res = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://hl-sales-app.railway.app',
+      'X-Title': 'HL Sales App',
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 1024,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    if (res.status === 429) {
+      throw new Error('Layanan AI sedang sibuk. Silakan coba lagi beberapa saat.');
+    }
+    throw new Error(`OpenRouter error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const json = await res.json() as any;
+  return json.choices?.[0]?.message?.content?.trim() || 'Tidak ada respons dari AI.';
+}
 
 /** Helper to enrich a list of transaction rows with their items */
 async function getTransactionSummaries(): Promise<any[]> {
@@ -42,10 +81,6 @@ export async function generatePaymentReminder(
   customerId: string,
   transactionId?: string
 ): Promise<string> {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set in backend .env');
-  }
-
   // 1. Fetch customer name
   const { data: customer, error: custError } = await supabaseAdmin
     .from('customers')
@@ -78,7 +113,6 @@ export async function generatePaymentReminder(
     const txOmzet = items.reduce((sum: number, item: any) => sum + Number(item.line_omzet || 0), 0);
     const ongkir = Number(tx.ongkir || 0);
     const total = txOmzet + ongkir;
-
     return `- Bon No: ${tx.nomor_bon} (Tanggal: ${tx.tanggal}) sebesar Rp ${total.toLocaleString('id-ID')} (termasuk ongkir Rp ${ongkir.toLocaleString('id-ID')})`;
   }).join('\n');
 
@@ -88,41 +122,27 @@ export async function generatePaymentReminder(
     return sum + txOmzet + Number(tx.ongkir || 0);
   }, 0);
 
-  // 3. Invoke Gemini
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-  const prompt = `\nAnda adalah asisten keuangan profesional untuk bisnis grosir/toko "HL".
-Tugas Anda adalah membuat draf pesan pengingat pembayaran WhatsApp yang sangat sopan, ramah, dan profesional untuk pelanggan berikut:
+  // 3. Call OpenRouter
+  const systemPrompt = `Anda adalah asisten keuangan profesional untuk bisnis grosir/toko "HL". Tugas Anda membuat draf pesan pengingat pembayaran WhatsApp yang sopan, ramah, dan profesional dalam Bahasa Indonesia. HANYA kembalikan teks pesan WhatsApp siap kirim, tanpa komentar tambahan.`;
 
-Nama Pelanggan: ${customer.name}
+  const userPrompt = `Buat draf pesan pengingat pembayaran untuk:
+Nama Pelanggan: ${(customer as any).name}
 Total Tunggakan: Rp ${totalOutstanding.toLocaleString('id-ID')}
-Rincian Bon outstanding:
+Rincian Bon:
 ${outstandingDetails}
 
-Aturan Penulisan Pesan:
-1. Gunakan bahasa Indonesia yang sopan dan ramah (misalnya memakai sapaan "Bapak/Ibu", "Halo", "Semoga sehat selalu").
-2. Sebutkan rincian nomor bon dan total nominal yang perlu dibayarkan dengan jelas.
-3. Hindari kesan menuduh atau terlalu menekan. Fokus pada konfirmasi/mengingatkan status pembayaran.
-4. Akhiri dengan ucapan terima kasih dan info kontak jika mereka ingin bertanya atau melakukan konfirmasi pembayaran.
-5. HANYA kembalikan teks pesan WhatsApp yang siap dikirim (jangan berikan komentar pembuka/penutup asisten).
-`;
+Aturan:
+1. Gunakan sapaan sopan "Bapak/Ibu" dan salam pembuka hangat.
+2. Sebutkan rincian nomor bon dan total dengan jelas.
+3. Hindari kesan menuduh — fokus pada konfirmasi/pengingat.
+4. Akhiri dengan terima kasih dan info kontak.
+5. JANGAN gunakan tanda bintang (*) sama sekali.`;
 
-  try {
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
-  } catch (err: any) {
-    if (err?.message?.includes('429') || err?.message?.includes('Too Many Requests') || err?.message?.includes('quota')) {
-      throw new Error('Layanan AI sedang sibuk atau quota harian habis. Silakan coba lagi beberapa saat.');
-    }
-    throw err;
-  }
+  return callOpenRouter(systemPrompt, userPrompt);
 }
 
 /** Answer business questions based on live database snapshots */
 export async function answerFinancialQuery(userQuery: string): Promise<string> {
-  if (!process.env.GEMINI_API_KEY) {
-    return 'Mohon maaf, asisten AI belum bisa digunakan karena `GEMINI_API_KEY` belum dikonfigurasi di file .env backend.';
-  }
-
   // 1. Fetch context data
   const { data: customers } = await supabaseAdmin
     .from('customers')
@@ -136,69 +156,40 @@ export async function answerFinancialQuery(userQuery: string): Promise<string> {
 
   const transactions = await getTransactionSummaries();
 
-  // 2. Format context for prompt
-  const customerList = (customers || []).map(c => `- ${c.name} (Bonus Threshold: Rp ${Number(c.bonus_threshold).toLocaleString('id-ID')})`).join('\n');
-  const productList = (products || []).map(p => `- ${p.name} (Tipe: ${p.type}, Jual: Rp ${Number(p.base_price).toLocaleString('id-ID')}, Modal: Rp ${Number(p.cost_price).toLocaleString('id-ID')})`).join('\n');
-  
-  const totalPiutang = transactions
-    .filter(t => t.status === 'Piutang')
-    .reduce((sum, t) => sum + t.amount_owed, 0);
+  // 2. Format context
+  const customerList = (customers || []).map((c: any) => `- ${c.name} (Bonus Threshold: Rp ${Number(c.bonus_threshold).toLocaleString('id-ID')})`).join('\n');
+  const productList = (products || []).map((p: any) => `- ${p.name} (Tipe: ${p.type}, Jual: Rp ${Number(p.base_price).toLocaleString('id-ID')}, Modal: Rp ${Number(p.cost_price).toLocaleString('id-ID')})`).join('\n');
 
-  const totalLunasOmzet = transactions
-    .filter(t => t.status === 'Lunas' && !t.is_bonus)
-    .reduce((sum, t) => sum + t.total_omzet, 0);
+  const totalPiutang = transactions.filter(t => t.status === 'Piutang').reduce((sum, t) => sum + t.amount_owed, 0);
+  const totalLunasOmzet = transactions.filter(t => t.status === 'Lunas' && !t.is_bonus).reduce((sum, t) => sum + t.total_omzet, 0);
+  const totalLunasLaba = transactions.filter(t => t.status === 'Lunas' && !t.is_bonus).reduce((sum, t) => sum + t.total_laba, 0);
 
-  const totalLunasLaba = transactions
-    .filter(t => t.status === 'Lunas' && !t.is_bonus)
-    .reduce((sum, t) => sum + t.total_laba, 0);
-
-  const txSummaries = transactions.slice(-15).map(t => 
-    `- Bon: ${t.nomor_bon} | Pelanggan: ${t.customer_name} | Tanggal: ${t.tanggal} | Status: ${t.status} | Omzet: Rp ${t.total_omzet.toLocaleString('id-ID')} | Laba: Rp ${t.total_laba.toLocaleString('id-ID')} | Total Tagihan (incl ongkir): Rp ${t.amount_owed.toLocaleString('id-ID')}`
+  const txSummaries = transactions.slice(-15).map(t =>
+    `- Bon: ${t.nomor_bon} | Pelanggan: ${t.customer_name} | Tanggal: ${t.tanggal} | Status: ${t.status} | Omzet: Rp ${t.total_omzet.toLocaleString('id-ID')} | Laba: Rp ${t.total_laba.toLocaleString('id-ID')} | Tagihan: Rp ${t.amount_owed.toLocaleString('id-ID')}`
   ).join('\n');
 
-  // 3. Invoke Gemini
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-  const prompt = `
-Anda adalah "HL AI Assistant", asisten keuangan AI cerdas untuk pemilik bisnis "HL Sales".
-Di bawah ini adalah data terbaru dari database toko Anda saat ini:
+  // 3. Call OpenRouter
+  const systemPrompt = `Anda adalah "HL AI Assistant", asisten keuangan cerdas untuk pemilik bisnis "HL Sales". Jawab dengan ramah, jelas, dan akurat dalam Bahasa Indonesia. Gunakan metode Cash Basis (hanya transaksi Lunas untuk omzet/laba). JANGAN gunakan tanda bintang (*) sama sekali. Jika ditanya siapa yang membuat Anda, jawab: "Saya diciptakan oleh pengguna HL".`;
 
----
-RINGKASAN KEUANGAN AKTIF:
-- Total Piutang Belum Lunas: Rp ${totalPiutang.toLocaleString('id-ID')}
-- Total Omzet Lunas (Cash Basis): Rp ${totalLunasOmzet.toLocaleString('id-ID')}
-- Total Laba Bersih HL Lunas (Cash Basis): Rp ${totalLunasLaba.toLocaleString('id-ID')}
+  const userPrompt = `Data bisnis terkini:
 
-DAFTAR PELANGGAN AKTIF:
-${customerList}
+RINGKASAN KEUANGAN:
+- Total Piutang: Rp ${totalPiutang.toLocaleString('id-ID')}
+- Total Omzet Lunas: Rp ${totalLunasOmzet.toLocaleString('id-ID')}
+- Total Laba Bersih: Rp ${totalLunasLaba.toLocaleString('id-ID')}
 
-DAFTAR PRODUK CATALOG:
-${productList}
+PELANGGAN AKTIF:
+${customerList || '(belum ada data)'}
 
-DAFTAR 15 TRANSAKSI TERAKHIR:
-${txSummaries}
----
+PRODUK KATALOG:
+${productList || '(belum ada data)'}
 
-Pertanyaan Pemilik Bisnis: "${userQuery}"
+15 TRANSAKSI TERAKHIR:
+${txSummaries || '(belum ada data)'}
 
-Tugas Anda:
-1. Jawab pertanyaan di atas dengan ramah, jelas, profesional, dan akurat menggunakan data yang disediakan di atas.
-2. Jika ditanya mengenai performa keuangan, prioritaskan metode "Cash Basis" (hanya menghitung transaksi berstatus Lunas untuk omzet/laba).
-3. Jika data tidak tersedia di konteks di atas, beri tahu dengan sopan bahwa Anda saat ini tidak memiliki akses ke data spesifik tersebut.
-4. Gunakan format daftar yang rapi (list) dengan spasi/baris baru agar mudah dibaca oleh pemilik toko.
-5. Jawab dalam Bahasa Indonesia yang santun namun bersahabat.
-6. Jika ditanya mengenai siapa yang menciptakan Anda atau siapa pembuat Anda, jawablah secara persis: "Saya diciptakan oleh pengguna HL".
-7. JANGAN PERNAH menggunakan format tanda bintang ganda (seperti **teks**) atau tanda bintang tunggal (*) dalam jawaban Anda. Tuliskan teks biasa saja tanpa karakter bintang (*) sama sekali.
-`;
+Pertanyaan: ${userQuery}`;
 
-  try {
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
-  } catch (err: any) {
-    if (err?.message?.includes('429') || err?.message?.includes('Too Many Requests') || err?.message?.includes('quota')) {
-      return 'Maaf, layanan AI sedang tidak tersedia karena quota harian habis. Silakan coba lagi beberapa saat atau besok.';
-    }
-    throw err;
-  }
+  return callOpenRouter(systemPrompt, userPrompt);
 }
 
 // ─── Helper: handle Gemini quota errors ──────────────────────
@@ -209,7 +200,7 @@ function handleGeminiError(err: any): never {
   throw err;
 }
 
-// ─── 1. Analisis Risiko Piutang per Pelanggan ─────────────────
+// ─── 1. Analisis Risiko
 // Menilai risiko macet berdasarkan histori pembayaran pelanggan
 
 export interface RiskLevel {
