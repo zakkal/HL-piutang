@@ -12,6 +12,16 @@ const router = Router();
 // All routes require authentication
 router.use(authMiddleware);
 
+// GET /reports/chart — Monthly chart data 6 bulan terakhir
+router.get('/chart', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await reportService.getMonthlyChartData();
+    sendSuccess(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /reports/recap?type=customer|product|overall&month=XX&year=XXXX
 router.get('/recap', async (req: Request, res: Response, next: NextFunction) => {
   try {

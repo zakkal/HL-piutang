@@ -410,3 +410,66 @@ function enrichTx(tx: any, items: any[]): TransactionWithItems {
     amount_owed: toNumber(txOmzet.plus(ongkir)),
   };
 }
+
+// ─── Monthly Chart Data (6 bulan terakhir) ────────────────────
+
+export interface MonthlyChartPoint {
+  month: number;
+  year: number;
+  label: string;
+  omzet: number;
+  piutang: number;
+  lunas: number;
+  laba: number;
+}
+
+export async function getMonthlyChartData(): Promise<MonthlyChartPoint[]> {
+  const result: MonthlyChartPoint[] = [];
+  const now = new Date();
+
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const month = d.getMonth() + 1;
+    const year = d.getFullYear();
+    const label = d.toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
+
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    const { data: lunasTxs } = await supabaseAdmin
+      .from('transactions')
+      .select('ongkir, transaction_items(line_omzet, line_laba)')
+      .eq('status', 'Lunas')
+      .eq('is_bonus', false)
+      .gte('tanggal', startDate)
+      .lte('tanggal', endDate);
+
+    const { data: piutangTxs } = await supabaseAdmin
+      .from('transactions')
+      .select('ongkir, transaction_items(line_omzet)')
+      .eq('status', 'Piutang')
+      .eq('is_bonus', false)
+      .gte('tanggal', startDate)
+      .lte('tanggal', endDate);
+
+    let omzet = 0, laba = 0, lunas = 0, piutang = 0;
+
+    for (const tx of (lunasTxs || []) as any[]) {
+      const txOmzet = (tx.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_omzet || 0), 0);
+      const txLaba = (tx.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_laba || 0), 0);
+      omzet += txOmzet;
+      laba += txLaba;
+      lunas += txOmzet + Number(tx.ongkir || 0);
+    }
+
+    for (const tx of (piutangTxs || []) as any[]) {
+      const txOmzet = (tx.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_omzet || 0), 0);
+      piutang += txOmzet + Number(tx.ongkir || 0);
+    }
+
+    result.push({ month, year, label, omzet, piutang, lunas, laba });
+  }
+
+  return result;
+}
