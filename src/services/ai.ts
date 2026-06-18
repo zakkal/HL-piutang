@@ -529,91 +529,185 @@ export async function detectAnomalies(): Promise<TransactionAnomaly[]> {
   return anomalies.slice(0, 20);
 }
 
-// ─── 5. Ringkasan Harian/Mingguan (AI-generated) ─────────────
+// ─── 5. Ringkasan Harian (Rule-Based, tanpa AI/quota) ─────────
+// Generate teks ringkasan bisnis yang detail dari data real
+// tanpa memanggil Gemini — tidak ada limit, selalu tersedia.
 
 export async function getDailySummary(): Promise<string> {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY tidak dikonfigurasi');
-  }
-
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
+
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
   const weekAgoStr = weekAgo.toISOString().split('T')[0];
 
-  // Transaksi hari ini
-  const { data: todayTxs } = await supabaseAdmin
-    .from('transactions')
-    .select('*, transaction_items(line_omzet, line_laba), customers(name)')
-    .eq('tanggal', todayStr)
-    .eq('is_bonus', false);
+  const monthAgo = new Date(today);
+  monthAgo.setDate(monthAgo.getDate() - 30);
+  const monthAgoStr = monthAgo.toISOString().split('T')[0];
 
-  // Transaksi minggu ini
-  const { data: weekTxs } = await supabaseAdmin
-    .from('transactions')
-    .select('*, transaction_items(line_omzet, line_laba), customers(name)')
-    .gte('tanggal', weekAgoStr)
-    .lte('tanggal', todayStr)
-    .eq('is_bonus', false);
+  const fmt = (n: number) => n.toLocaleString('id-ID');
+  const fmtRp = (n: number) => `Rp ${fmt(n)}`;
 
-  // Total piutang aktif
-  const { data: allPiutang } = await supabaseAdmin
-    .from('transactions')
-    .select('ongkir, transaction_items(line_omzet), customers(name)')
-    .eq('status', 'Piutang')
-    .eq('is_bonus', false);
+  // ── Fetch semua data yang dibutuhkan ──────────────────────
+  const [todayTxsRes, weekTxsRes, monthTxsRes, allPiutangRes, allCustomersRes] = await Promise.all([
+    supabaseAdmin.from('transactions').select('*, transaction_items(line_omzet, line_laba), customers(name)').eq('tanggal', todayStr).eq('is_bonus', false),
+    supabaseAdmin.from('transactions').select('*, transaction_items(line_omzet, line_laba), customers(name)').gte('tanggal', weekAgoStr).lte('tanggal', todayStr).eq('is_bonus', false),
+    supabaseAdmin.from('transactions').select('*, transaction_items(line_omzet, line_laba), customers(name)').gte('tanggal', monthAgoStr).lte('tanggal', todayStr).eq('is_bonus', false),
+    supabaseAdmin.from('transactions').select('customer_id, ongkir, transaction_items(line_omzet), customers(name)').eq('status', 'Piutang').eq('is_bonus', false),
+    supabaseAdmin.from('customers').select('id, name').is('deleted_at', null),
+  ]);
 
-  // Overdue > 14 hari
-  const overdueAlerts = await getOverdueAlerts(14);
+  const todayTxs = todayTxsRes.data || [];
+  const weekTxs = weekTxsRes.data || [];
+  const monthTxs = monthTxsRes.data || [];
+  const allPiutang = allPiutangRes.data || [];
+  const allCustomers = allCustomersRes.data || [];
 
-  // Kalkulasi
-  const todayNew = (todayTxs || []).length;
-  const todayLunas = (todayTxs || []).filter((t: any) => t.status === 'Lunas').length;
-  const todayPiutang = (todayTxs || []).filter((t: any) => t.status === 'Piutang').length;
+  // ── Kalkulasi hari ini ────────────────────────────────────
+  const todayNew = todayTxs.length;
+  const todayLunas = todayTxs.filter((t: any) => t.status === 'Lunas');
+  const todayPiutangTxs = todayTxs.filter((t: any) => t.status === 'Piutang');
+  const todayOmzet = todayLunas.reduce((s: number, t: any) =>
+    s + (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_omzet || 0), 0), 0);
+  const todayLaba = todayLunas.reduce((s: number, t: any) =>
+    s + (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_laba || 0), 0), 0);
 
-  const weekOmzet = (weekTxs || [])
-    .filter((t: any) => t.status === 'Lunas')
-    .reduce((sum: number, t: any) => {
-      return sum + (t.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_omzet || 0), 0);
-    }, 0);
+  // ── Kalkulasi minggu ini ──────────────────────────────────
+  const weekLunasTxs = weekTxs.filter((t: any) => t.status === 'Lunas');
+  const weekOmzet = weekLunasTxs.reduce((s: number, t: any) =>
+    s + (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_omzet || 0), 0), 0);
+  const weekLaba = weekLunasTxs.reduce((s: number, t: any) =>
+    s + (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_laba || 0), 0), 0);
+  const weekNewTxCount = weekTxs.length;
 
-  const weekLaba = (weekTxs || [])
-    .filter((t: any) => t.status === 'Lunas')
-    .reduce((sum: number, t: any) => {
-      return sum + (t.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_laba || 0), 0);
-    }, 0);
+  // ── Kalkulasi 30 hari ─────────────────────────────────────
+  const monthLunasTxs = monthTxs.filter((t: any) => t.status === 'Lunas');
+  const monthOmzet = monthLunasTxs.reduce((s: number, t: any) =>
+    s + (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_omzet || 0), 0), 0);
+  const monthLaba = monthLunasTxs.reduce((s: number, t: any) =>
+    s + (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_laba || 0), 0), 0);
 
-  const totalPiutangAktif = (allPiutang || []).reduce((sum: number, t: any) => {
-    const omzet = (t.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_omzet || 0), 0);
-    return sum + omzet + Number(t.ongkir || 0);
+  // ── Kalkulasi piutang aktif ───────────────────────────────
+  const totalPiutangAktif = allPiutang.reduce((s: number, t: any) => {
+    const omzet = (t.transaction_items || []).reduce((ss: number, i: any) => ss + Number(i.line_omzet || 0), 0);
+    return s + omzet + Number(t.ongkir || 0);
   }, 0);
 
-  const overdueCount = overdueAlerts.reduce((s, a) => s + a.overdueTransactions.length, 0);
-  const overdueNames = overdueAlerts.slice(0, 3).map(a => a.customerName).join(', ');
-
-  const model = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!).getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-
-  const prompt = `
-Anda adalah asisten bisnis "HL Sales". Buat ringkasan bisnis harian yang ringkas, informatif, dan mudah dibaca.
-Format: gunakan emoji, teks biasa (TANPA markdown bintang **), dan baris baru antar poin.
-
-Data hari ini (${todayStr}):
-- Bon baru hari ini: ${todayNew} (${todayLunas} lunas, ${todayPiutang} piutang)
-- Total piutang aktif: Rp ${totalPiutangAktif.toLocaleString('id-ID')}
-- Omzet 7 hari terakhir (lunas): Rp ${weekOmzet.toLocaleString('id-ID')}
-- Laba 7 hari terakhir (lunas): Rp ${weekLaba.toLocaleString('id-ID')}
-- Bon overdue (>14 hari): ${overdueCount} bon
-${overdueCount > 0 ? `- Pelanggan overdue teratas: ${overdueNames}` : ''}
-
-Buat ringkasan 5-7 poin singkat mencakup: kondisi hari ini, piutang, performa minggu ini, dan peringatan jika ada overdue.
-JANGAN gunakan tanda bintang (*) sama sekali. Gunakan emoji saja sebagai penanda poin.
-`;
-
-  try {
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
-  } catch (err: any) {
-    handleGeminiError(err);
+  // Piutang per pelanggan
+  const piutangPerCustomer = new Map<string, { name: string; total: number; count: number }>();
+  for (const t of allPiutang as any[]) {
+    const cid = t.customer_id;
+    const omzet = (t.transaction_items || []).reduce((s: number, i: any) => s + Number(i.line_omzet || 0), 0);
+    const amount = omzet + Number(t.ongkir || 0);
+    const name = t.customers?.name || 'Unknown';
+    if (!piutangPerCustomer.has(cid)) piutangPerCustomer.set(cid, { name, total: 0, count: 0 });
+    const entry = piutangPerCustomer.get(cid)!;
+    entry.total += amount;
+    entry.count += 1;
   }
+  const topPiutangCustomers = Array.from(piutangPerCustomer.values())
+    .sort((a, b) => b.total - a.total).slice(0, 3);
+
+  // ── Overdue > 14 hari ─────────────────────────────────────
+  const overdueAlerts = await getOverdueAlerts(14);
+  const overdueCount = overdueAlerts.reduce((s, a) => s + a.overdueTransactions.length, 0);
+  const overdueTotalValue = overdueAlerts.reduce((s, a) => s + a.totalOverdue, 0);
+
+  // ── Overdue > 30 hari (kritis) ────────────────────────────
+  const criticalOverdue = await getOverdueAlerts(30);
+  const criticalCount = criticalOverdue.reduce((s, a) => s + a.overdueTransactions.length, 0);
+
+  // ── Margin laba ───────────────────────────────────────────
+  const weekMargin = weekOmzet > 0 ? ((weekLaba / weekOmzet) * 100).toFixed(1) : '0';
+  const monthMargin = monthOmzet > 0 ? ((monthLaba / monthOmzet) * 100).toFixed(1) : '0';
+
+  // ── Tingkat pelunasan minggu ini ──────────────────────────
+  const weekTotal = weekTxs.length;
+  const weekLunasCount = weekLunasTxs.length;
+  const lunasRate = weekTotal > 0 ? ((weekLunasCount / weekTotal) * 100).toFixed(0) : '0';
+
+  // ── Generate teks ringkasan ───────────────────────────────
+  const todayDate = today.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const lines: string[] = [];
+
+  lines.push(`📋 Laporan Bisnis Harian — ${todayDate}`);
+  lines.push('');
+
+  // Kondisi hari ini
+  lines.push('📌 Kondisi Hari Ini');
+  if (todayNew === 0) {
+    lines.push('Belum ada transaksi baru yang tercatat hari ini.');
+  } else {
+    lines.push(`Tercatat ${todayNew} transaksi baru hari ini — ${todayLunas.length} langsung lunas, ${todayPiutangTxs.length} masih piutang.`);
+    if (todayOmzet > 0) lines.push(`Omzet terkonfirmasi hari ini: ${fmtRp(todayOmzet)} dengan laba bersih ${fmtRp(todayLaba)}.`);
+  }
+  lines.push('');
+
+  // Piutang aktif
+  lines.push('💰 Status Piutang Aktif');
+  if (totalPiutangAktif === 0) {
+    lines.push('Tidak ada piutang aktif saat ini. Semua pembayaran telah lunas.');
+  } else {
+    lines.push(`Total piutang yang belum terkumpul: ${fmtRp(totalPiutangAktif)} dari ${allPiutang.length} bon aktif.`);
+    if (topPiutangCustomers.length > 0) {
+      lines.push(`Piutang terbesar saat ini:`);
+      topPiutangCustomers.forEach((c, idx) => {
+        lines.push(`  ${idx + 1}. ${c.name} — ${fmtRp(c.total)} (${c.count} bon)`);
+      });
+    }
+  }
+  lines.push('');
+
+  // Performa 7 hari
+  lines.push('📈 Performa 7 Hari Terakhir');
+  if (weekOmzet === 0) {
+    lines.push('Belum ada omzet terkonfirmasi dalam 7 hari terakhir.');
+  } else {
+    lines.push(`Omzet lunas: ${fmtRp(weekOmzet)} dari ${weekLunasCount} transaksi.`);
+    lines.push(`Laba bersih HL: ${fmtRp(weekLaba)} (margin ${weekMargin}%).`);
+    lines.push(`Tingkat pelunasan minggu ini: ${lunasRate}% dari ${weekTotal} total transaksi.`);
+  }
+  lines.push('');
+
+  // Performa 30 hari
+  lines.push('📊 Performa 30 Hari Terakhir');
+  if (monthOmzet === 0) {
+    lines.push('Belum ada data omzet 30 hari terakhir.');
+  } else {
+    lines.push(`Omzet lunas: ${fmtRp(monthOmzet)} — Laba bersih: ${fmtRp(monthLaba)} (margin ${monthMargin}%).`);
+    lines.push(`Rata-rata omzet per hari: ${fmtRp(Math.round(monthOmzet / 30))}.`);
+  }
+  lines.push('');
+
+  // Peringatan overdue
+  if (overdueCount === 0) {
+    lines.push('✅ Status Pembayaran');
+    lines.push('Tidak ada bon yang melewati batas waktu wajar (>14 hari). Kondisi pembayaran pelanggan sangat baik.');
+  } else {
+    lines.push('⚠️ Peringatan Overdue');
+    lines.push(`Terdapat ${overdueCount} bon belum lunas lebih dari 14 hari, senilai total ${fmtRp(overdueTotalValue)}.`);
+    if (criticalCount > 0) {
+      lines.push(`Dari jumlah tersebut, ${criticalCount} bon sudah melewati 30 hari dan membutuhkan tindakan segera.`);
+    }
+    const topOverdue = overdueAlerts.slice(0, 2);
+    if (topOverdue.length > 0) {
+      lines.push(`Prioritas penagihan:`);
+      topOverdue.forEach((a, idx) => {
+        lines.push(`  ${idx + 1}. ${a.customerName} — ${fmtRp(a.totalOverdue)} (${a.overdueTransactions.length} bon, terlama ${a.overdueTransactions[0]?.daysOverdue} hari)`);
+      });
+    }
+  }
+  lines.push('');
+
+  // Rekomendasi
+  lines.push('💡 Rekomendasi Hari Ini');
+  const recs: string[] = [];
+  if (criticalCount > 0) recs.push(`Segera hubungi pelanggan dengan bon overdue >30 hari untuk memastikan kepastian pembayaran.`);
+  if (overdueCount > 0 && criticalCount === 0) recs.push(`Kirimkan pengingat pembayaran via WhatsApp kepada pelanggan dengan bon overdue.`);
+  if (totalPiutangAktif > monthOmzet * 0.5) recs.push(`Rasio piutang terhadap omzet bulan ini cukup tinggi — pertimbangkan untuk memprioritaskan pelunasan sebelum menambah bon baru.`);
+  if (weekMargin !== '0' && parseFloat(weekMargin) < 10) recs.push(`Margin laba minggu ini di bawah 10% — tinjau kembali struktur diskon pelanggan.`);
+  if (recs.length === 0) recs.push(`Kondisi bisnis berjalan baik. Pertahankan disiplin pencatatan dan follow-up piutang secara rutin.`);
+  recs.forEach((r, i) => lines.push(`${i + 1}. ${r}`));
+
+  return lines.join('\n');
 }
