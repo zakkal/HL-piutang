@@ -56,11 +56,29 @@ router.post('/change-password', async (req: Request, res: Response, next: NextFu
     }
 
     const token = authHeader.substring(7);
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+
+    // Gunakan supabaseAdmin dengan service role untuk update password user
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    // Verifikasi user dulu
+    const { data: { user }, error: userError } = await supabaseUser.auth.getUser(token);
+    if (userError || !user) {
+      return sendError(res, 'Sesi tidak valid, silakan login ulang', undefined, 401);
+    }
+
+    // Update password menggunakan admin API
+    const supabaseAdmin = createClient(
+      SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+      password: newPassword,
+    });
+
     if (error) {
       return sendError(res, error.message, undefined, 400);
     }
