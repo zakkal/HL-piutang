@@ -58,11 +58,11 @@ router.post('/change-password', async (req: Request, res: Response, next: NextFu
     const token = authHeader.substring(7);
     const { createClient } = await import('@supabase/supabase-js');
 
-    // Verifikasi user
-    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const { data: { user }, error: userError } = await supabaseUser.auth.getUser(token);
+    // Inisialisasi supabase admin
+    const supabaseAdmin = createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+    // Verifikasi user via admin — lebih reliable, tidak bergantung sesi in-memory
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
     if (userError || !user) {
       return sendError(res, 'Sesi tidak valid, silakan login ulang', undefined, 401);
     }
@@ -70,9 +70,6 @@ router.post('/change-password', async (req: Request, res: Response, next: NextFu
     // Buat hash SHA-256 dari password baru
     const { createHash } = await import('crypto');
     const newHash = createHash('sha256').update(newPassword).digest('hex');
-
-    // Inisialisasi supabase admin
-    const supabaseAdmin = createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
     // Cek apakah password pernah digunakan sebelumnya
     const { data: history } = await supabaseAdmin
