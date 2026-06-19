@@ -6,7 +6,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { toNumber, D } from './financial';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // ─── Helper: call OpenRouter ──────────────────────────────────
