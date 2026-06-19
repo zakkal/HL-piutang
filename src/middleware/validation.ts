@@ -3,7 +3,7 @@
 import { z } from 'zod';
 
 export const discountSchema = z.object({
-  type: z.enum(['LM', 'BR'], { errorMap: () => ({ message: 'Tipe diskon harus LM atau BR' }) }),
+  type: z.enum(['LM', 'BR'], { error: 'Tipe diskon harus LM atau BR' }),
   step_order: z.number().int().positive({ message: 'Urutan diskon harus bilangan positif' }),
   discount_percentage: z.number().min(0, 'Persentase diskon minimal 0').max(100, 'Persentase diskon maksimal 100'),
 });
@@ -22,14 +22,14 @@ export const updateCustomerSchema = z.object({
 
 export const createProductSchema = z.object({
   name: z.string().min(1, 'Nama produk wajib diisi').max(255, 'Nama terlalu panjang'),
-  type: z.enum(['LM', 'BR'], { errorMap: () => ({ message: 'Tipe produk harus LM atau BR' }) }),
+  type: z.enum(['LM', 'BR'], { error: 'Tipe produk harus LM atau BR' }),
   cost_price: z.number().min(0, 'Harga modal tidak boleh negatif'),
   base_price: z.number().min(0, 'Harga jual tidak boleh negatif'),
 });
 
 export const updateProductSchema = z.object({
   name: z.string().min(1, 'Nama produk wajib diisi').max(255, 'Nama terlalu panjang').optional(),
-  type: z.enum(['LM', 'BR'], { errorMap: () => ({ message: 'Tipe produk harus LM atau BR' }) }).optional(),
+  type: z.enum(['LM', 'BR'], { error: 'Tipe produk harus LM atau BR' }).optional(),
   cost_price: z.number().min(0, 'Harga modal tidak boleh negatif').optional(),
   base_price: z.number().min(0, 'Harga jual tidak boleh negatif').optional(),
 });
@@ -65,7 +65,7 @@ export const loginSchema = z.object({
 
 export const recapQuerySchema = z.object({
   type: z.enum(['customer', 'product', 'overall'], {
-    errorMap: () => ({ message: 'Tipe laporan harus customer, product, atau overall' }),
+    error: 'Tipe laporan harus customer, product, atau overall',
   }),
   month: z.string().regex(/^\d{1,2}$/, 'Bulan tidak valid').transform(Number),
   year: z.string().regex(/^\d{4}$/, 'Tahun tidak valid').transform(Number),
