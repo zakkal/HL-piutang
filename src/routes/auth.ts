@@ -42,6 +42,35 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response, next
   }
 });
 
+// POST /auth/change-password
+router.post('/change-password', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      throw new ValidationError('Password baru minimal 6 karakter');
+    }
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return sendError(res, 'Unauthorized', undefined, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      return sendError(res, error.message, undefined, 400);
+    }
+
+    sendSuccess(res, null, 'Password berhasil diubah');
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /auth/logout
 router.post('/logout', async (req: Request, res: Response, next: NextFunction) => {
   try {
