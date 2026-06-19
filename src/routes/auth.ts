@@ -25,7 +25,7 @@ router.post('/login', loginRateLimiter, async (req: Request, res: Response, next
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
-      return sendError(res, 'Invalid email or password', undefined, 401);
+      return sendError(res, 'Email atau password salah', undefined, 401);
     }
 
     sendSuccess(res, {
@@ -52,36 +52,51 @@ router.post('/change-password', async (req: Request, res: Response, next: NextFu
 
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      return sendError(res, 'Unauthorized', undefined, 401);
+      return sendError(res, 'Sesi tidak valid, silakan login ulang', undefined, 401);
     }
 
     const token = authHeader.substring(7);
-
-    // Gunakan supabaseAdmin dengan service role untuk update password user
     const { createClient } = await import('@supabase/supabase-js');
+
+    // Verifikasi user
     const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
-
-    // Verifikasi user dulu
     const { data: { user }, error: userError } = await supabaseUser.auth.getUser(token);
     if (userError || !user) {
       return sendError(res, 'Sesi tidak valid, silakan login ulang', undefined, 401);
     }
 
-    // Update password menggunakan admin API
-    const supabaseAdmin = createClient(
-      SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // Buat hash SHA-256 dari password baru
+    const { createHash } = await import('crypto');
+    const newHash = createHash('sha256').update(newPassword).digest('hex');
 
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+    // Inisialisasi supabase admin
+    const supabaseAdmin = createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+    // Cek apakah password pernah digunakan sebelumnya
+    const { data: history } = await supabaseAdmin
+      .from('password_history')
+      .select('pw_hash')
+      .eq('user_id', user.id);
+
+    if (history && history.some((h: any) => h.pw_hash === newHash)) {
+      return sendError(res, 'Password ini pernah digunakan sebelumnya. Gunakan password yang berbeda.', undefined, 400);
+    }
+
+    // Update password
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
       password: newPassword,
     });
-
-    if (error) {
-      return sendError(res, error.message, undefined, 400);
+    if (updateError) {
+      return sendError(res, 'Gagal mengubah password. Silakan coba lagi.', undefined, 400);
     }
+
+    // Simpan hash ke histori
+    await supabaseAdmin.from('password_history').insert({
+      user_id: user.id,
+      pw_hash: newHash,
+    });
 
     sendSuccess(res, null, 'Password berhasil diubah');
   } catch (err) {

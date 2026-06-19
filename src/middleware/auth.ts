@@ -27,7 +27,7 @@ export async function authMiddleware(
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      throw new AuthError('Missing or invalid Authorization header');
+      throw new AuthError('Header Authorization tidak valid');
     }
 
     const token = authHeader.substring(7);
@@ -40,14 +40,14 @@ export async function authMiddleware(
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (error || !user) {
-      throw new AuthError('Invalid or expired token');
+      throw new AuthError('Sesi tidak valid atau telah berakhir. Silakan login ulang.');
     }
 
     // Check idle session timeout
     const now = Date.now();
     if (isSessionExpired(user.id, now)) {
       lastActivity.delete(user.id);
-      throw new AuthError('Session expired due to inactivity. Please log in again.');
+      throw new AuthError('Sesi berakhir karena tidak ada aktivitas. Silakan login ulang.');
     }
 
     // Update last activity
@@ -62,7 +62,7 @@ export async function authMiddleware(
     if (err instanceof AuthError) {
       next(err);
     } else {
-      next(new AuthError('Authentication failed'));
+      next(new AuthError('Autentikasi gagal. Silakan login ulang.'));
     }
   }
 }

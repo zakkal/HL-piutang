@@ -15,7 +15,7 @@ export class AppError extends Error {
 export class NotFoundError extends AppError {
   constructor(resource: string, id?: string) {
     super(
-      id ? `${resource} with id '${id}' not found` : `${resource} not found`,
+      id ? `${resource} dengan ID '${id}' tidak ditemukan` : `${resource} tidak ditemukan`,
       404
     );
     Object.setPrototypeOf(this, NotFoundError.prototype);
@@ -30,14 +30,14 @@ export class ValidationError extends AppError {
 }
 
 export class AuthError extends AppError {
-  constructor(message = 'Authentication required') {
+  constructor(message = 'Akses ditolak. Silakan login terlebih dahulu.') {
     super(message, 401);
     Object.setPrototypeOf(this, AuthError.prototype);
   }
 }
 
 export class ForbiddenError extends AppError {
-  constructor(message = 'Access denied') {
+  constructor(message = 'Anda tidak memiliki izin untuk melakukan tindakan ini.') {
     super(message, 403);
     Object.setPrototypeOf(this, ForbiddenError.prototype);
   }
@@ -74,8 +74,7 @@ export function globalErrorHandler(
   // Unexpected errors
   res.status(500).json({
     success: false,
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    error: 'Terjadi kesalahan pada server. Silakan coba lagi.',
     timestamp: new Date().toISOString(),
   });
 }
