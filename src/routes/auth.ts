@@ -98,7 +98,21 @@ router.post('/change-password', async (req: Request, res: Response, next: NextFu
       pw_hash: newHash,
     });
 
-    sendSuccess(res, null, 'Password berhasil diubah');
+    // Re-login dengan password baru untuk dapat token segar
+    const { data: newSession, error: loginError } = await supabaseAdmin.auth.signInWithPassword({
+      email: user.email!,
+      password: newPassword,
+    });
+
+    if (loginError || !newSession.session) {
+      // Tetap sukses meski re-login gagal, frontend akan handle
+      return sendSuccess(res, { new_token: null }, 'Password berhasil diubah');
+    }
+
+    sendSuccess(res, {
+      new_token: newSession.session.access_token,
+      new_refresh_token: newSession.session.refresh_token,
+    }, 'Password berhasil diubah');
   } catch (err) {
     next(err);
   }
