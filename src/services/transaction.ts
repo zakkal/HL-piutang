@@ -216,7 +216,8 @@ export async function settleTransaction(
 export async function settleMonth(
   customerId: string,
   month: number,
-  year: number
+  year: number,
+  tanggalPelunasan: string
 ): Promise<{ settled_count: number }> {
   // Find all Piutang transactions for this customer in the given month
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
@@ -237,13 +238,11 @@ export async function settleMonth(
     return { settled_count: 0 };
   }
 
-  const today = new Date().toISOString().split('T')[0];
-
   const { error: updateError } = await supabaseAdmin
     .from('transactions')
     .update({
       status: 'Lunas',
-      tanggal_pelunasan: today,
+      tanggal_pelunasan: tanggalPelunasan,
     })
     .in('id', piutangTxs.map(t => t.id));
 
@@ -268,7 +267,7 @@ export async function getCustomerActivity(
   // Fetch all transactions for this customer in the month
   const { data: txs, error } = await supabaseAdmin
     .from('transactions')
-    .select('*, transaction_items(*)')
+    .select('*, transaction_items(*, products(id, name, type))')
     .eq('customer_id', customerId)
     .gte('tanggal', startDate)
     .lte('tanggal', endDate)

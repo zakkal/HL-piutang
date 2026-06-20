@@ -63,9 +63,10 @@ router.post('/customers/:id/settle-month', async (req: Request, res: Response, n
     const result = await transactionService.settleMonth(
       req.params.id as string,
       parsed.data.month,
-      parsed.data.year
+      parsed.data.year,
+      parsed.data.tanggal_pelunasan
     );
-    sendSuccess(res, result, `${result.settled_count} transactions settled`);
+    sendSuccess(res, result, `${result.settled_count} transaksi berhasil dilunasi`);
   } catch (err) {
     next(err);
   }
@@ -94,6 +95,35 @@ router.post('/:id/settle', async (req: Request, res: Response, next: NextFunctio
       parsed.data.tanggal_pelunasan
     );
     sendSuccess(res, transaction, 'Transaction settled');
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /customers/:id/export-pdf — Export customer activity as PDF
+router.post('/customers/:id/export-pdf', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { month, year } = req.body;
+    if (!month || !year) throw new ValidationError('month dan year wajib diisi');
+
+    const activity = await transactionService.getCustomerActivity(req.params.id as string, Number(month), Number(year));
+    const { data: customer } = await (await import('../config/supabase')).supabaseAdmin
+      .from('customers')
+      .select('name')
+      .eq('id', req.params.id)
+      .single();
+
+    const pdfBuffer = await (await import('../services/report')).generateCustomerActivityPdf(
+      activity,
+      (customer as any)?.name || 'Pelanggan',
+      Number(month),
+      Number(year)
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="aktivitas-${req.params.id}-${month}-${year}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
   } catch (err) {
     next(err);
   }

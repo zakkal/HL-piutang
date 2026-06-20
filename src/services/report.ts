@@ -473,3 +473,85 @@ export async function getMonthlyChartData(): Promise<MonthlyChartPoint[]> {
 
   return result;
 }
+
+// ─── PDF Export: Customer Activity Per Bulan ─────────────────
+
+export async function generateCustomerActivityPdf(
+  activity: any,
+  customerName: string,
+  month: number,
+  year: number
+): Promise<Buffer> {
+  const months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header
+    doc.fontSize(16).font('Helvetica-Bold').text('HL Sales & Receivables Management', { align: 'center' });
+    doc.fontSize(12).font('Helvetica').text(`Daftar Transaksi — ${customerName}`, { align: 'center' });
+    doc.fontSize(10).text(`Periode: ${months[month - 1]} ${year}`, { align: 'center' });
+    doc.moveDown(0.5);
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+    doc.moveDown(0.5);
+
+    // Summary
+    doc.font('Helvetica-Bold').fontSize(9);
+    doc.text(`Total Piutang  : ${formatCurrency(activity.total_piutang)}`);
+    doc.text(`Total Lunas    : ${formatCurrency(activity.total_lunas)}`);
+    doc.text(`Omzet LM       : ${formatCurrency(activity.total_omzet_lm)}`);
+    doc.text(`Omzet BR       : ${formatCurrency(activity.total_omzet_br)}`);
+    doc.text(`Laba HL        : ${formatCurrency(activity.total_laba_hl)}`);
+    doc.moveDown(0.5);
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+    doc.moveDown(0.5);
+
+    // Transaction table header
+    const cols = [60, 80, 180, 80, 80];
+    const headers2 = ['Tanggal', 'No. Bon', 'Item', 'Status', 'Tagihan'];
+    let x = 50;
+    doc.font('Helvetica-Bold').fontSize(8);
+    headers2.forEach((h, i) => {
+      doc.text(h, x, doc.y, { width: cols[i], align: i >= 3 ? 'right' : 'left' });
+      x += cols[i];
+    });
+    doc.moveDown(0.3);
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+    doc.moveDown(0.3);
+
+    // Rows
+    doc.font('Helvetica').fontSize(7.5);
+    for (const tx of activity.transactions || []) {
+      const itemNames = (tx.items || []).map((item: any) => {
+        const name = item.products?.name || item.product_id.slice(0, 8);
+        return `${name} ×${item.quantity}`;
+      }).join(', ');
+
+      const rowY = doc.y;
+      x = 50;
+      const rowData = [
+        tx.tanggal,
+        tx.nomor_bon,
+        itemNames || '-',
+        tx.status + (tx.is_bonus ? ' (Bonus)' : ''),
+        formatCurrency(tx.amount_owed),
+      ];
+      rowData.forEach((val, i) => {
+        doc.text(String(val), x, rowY, { width: cols[i], align: i >= 3 ? 'right' : 'left' });
+        x += cols[i];
+      });
+      doc.moveDown(0.3);
+    }
+
+    doc.moveDown(0.5);
+    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+    doc.moveDown(0.5);
+    doc.font('Helvetica').fontSize(8).text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')}`, { align: 'right' });
+
+    doc.end();
+  });
+}

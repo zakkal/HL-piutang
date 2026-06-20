@@ -56,6 +56,7 @@ export const settleTransactionSchema = z.object({
 export const settleMonthSchema = z.object({
   month: z.number().int().min(1, 'Bulan tidak valid').max(12, 'Bulan tidak valid'),
   year: z.number().int().min(2000, 'Tahun tidak valid').max(2100, 'Tahun tidak valid'),
+  tanggal_pelunasan: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format tanggal harus YYYY-MM-DD'),
 });
 
 export const loginSchema = z.object({
