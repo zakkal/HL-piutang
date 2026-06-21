@@ -346,7 +346,7 @@ function drawTableRow(doc: PDFKit.PDFDocument, y: number, cols: number[], values
 
 export async function generateRecapPdf(report: RecapReport): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -355,43 +355,48 @@ export async function generateRecapPdf(report: RecapReport): Promise<Buffer> {
     const typeLabel = report.type === 'customer' ? 'Per Pelanggan' : report.type === 'product' ? 'Per Produk' : 'Keseluruhan';
     const periodLabel = `${MONTHS_ID[report.month - 1]} ${report.year}`;
 
-    // ── Header ──
-    doc.rect(0, 0, doc.page.width, 80).fillColor('#0a0a0a').fill();
-    doc.fillColor('white').fontSize(18).font('Helvetica-Bold').text('HL Sales & Receivables', 50, 18);
-    doc.fontSize(10).font('Helvetica').text(`Rekap ${typeLabel}  ·  ${periodLabel}`, 50, 44);
+    // ── Header bar ──
+    doc.rect(0, 0, doc.page.width, 75).fillColor('#111111').fill();
+    doc.fillColor('white').fontSize(16).font('Helvetica-Bold').text('HL Sales & Receivables', 50, 16);
+    doc.fontSize(10).font('Helvetica').text(`Rekap ${typeLabel}  ·  ${periodLabel}`, 50, 40);
     doc.fillColor('black');
-    doc.moveDown(1.5);
+    doc.y = 90;
 
-    // ── Info baris ──
-    doc.fontSize(9).font('Helvetica').text(`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'right' });
+    doc.fontSize(8).font('Helvetica').fillColor('#888888')
+      .text(`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'right' });
+    doc.fillColor('black');
     doc.moveDown(0.5);
 
-    // ── Ringkasan total ──
+    // ── Summary boxes ──
     const totals = report.totals;
     const summaryY = doc.y;
     const boxW = 115;
     [
-      { label: 'Total Omzet', value: formatCurrency(totals.total_omzet), color: '#1a1a1a' },
-      { label: 'Total Laba HL', value: formatCurrency(totals.total_laba_hl), color: '#1a1a1a' },
-      { label: 'Total Piutang', value: formatCurrency(totals.total_piutang), color: '#1a1a1a' },
-      { label: 'Total Lunas', value: formatCurrency(totals.total_lunas), color: '#1a1a1a' },
+      { label: 'Total Omzet', value: formatCurrency(totals.total_omzet) },
+      { label: 'Total Laba HL', value: formatCurrency(totals.total_laba_hl) },
+      { label: 'Total Piutang', value: formatCurrency(totals.total_piutang) },
+      { label: 'Total Lunas', value: formatCurrency(totals.total_lunas) },
     ].forEach((s, i) => {
       const bx = 50 + i * (boxW + 5);
-      doc.rect(bx, summaryY, boxW, 40).fillColor('#f0f0f0').fill();
-      doc.fillColor('#666666').fontSize(7).font('Helvetica').text(s.label, bx + 6, summaryY + 6, { width: boxW - 12 });
-      doc.fillColor('#1a1a1a').fontSize(8.5).font('Helvetica-Bold').text(s.value, bx + 6, summaryY + 19, { width: boxW - 12 });
+      doc.rect(bx, summaryY, boxW, 38).fillColor('#f2f2f2').fill();
+      doc.fillColor('#777777').fontSize(7).font('Helvetica').text(s.label, bx + 6, summaryY + 5, { width: boxW - 12 });
+      doc.fillColor('#111111').fontSize(8).font('Helvetica-Bold').text(s.value, bx + 6, summaryY + 17, { width: boxW - 12 });
     });
     doc.fillColor('black');
-    doc.y = summaryY + 50;
+    doc.y = summaryY + 48;
     doc.moveDown(0.5);
 
-    // ── Tabel utama ──
+    // ── Tabel ──
     const cols = [160, 80, 80, 80, 80];
     const headers = ['Nama', 'Omzet', 'Laba HL', 'Piutang', 'Lunas'];
     let rowY = drawTableHeader(doc, doc.y, cols, headers);
 
     report.entries.forEach((entry, idx) => {
-      if (rowY > 720) { doc.addPage(); rowY = 60; rowY = drawTableHeader(doc, rowY, cols, headers); }
+      if (rowY > 730) {
+        doc.addPage();
+        rowY = 50;
+        rowY = drawTableHeader(doc, rowY, cols, headers);
+      }
       rowY = drawTableRow(doc, rowY, cols, [
         entry.name,
         formatCurrency(entry.total_omzet),
@@ -402,41 +407,37 @@ export async function generateRecapPdf(report: RecapReport): Promise<Buffer> {
     });
 
     // Total row
-    doc.moveTo(50, rowY).lineTo(545, rowY).strokeColor('#cccccc').stroke();
+    doc.moveTo(50, rowY).lineTo(545, rowY).strokeColor('#aaaaaa').stroke();
     doc.strokeColor('black');
     rowY += 4;
-    doc.rect(50, rowY - 2, 495, 16).fillColor('#0a0a0a').fill();
+    if (rowY > 730) { doc.addPage(); rowY = 50; }
+    doc.rect(50, rowY - 2, 495, 16).fillColor('#222222').fill();
     doc.fillColor('white').font('Helvetica-Bold').fontSize(8);
-    let tx = 50;
+    let tx2 = 50;
     ['TOTAL', formatCurrency(totals.total_omzet), formatCurrency(totals.total_laba_hl), formatCurrency(totals.total_piutang), formatCurrency(totals.total_lunas)].forEach((v, i) => {
-      doc.text(v, tx, rowY, { width: cols[i], align: i === 0 ? 'left' : 'right' });
-      tx += cols[i];
+      doc.text(v, tx2, rowY, { width: cols[i], align: i === 0 ? 'left' : 'right' });
+      tx2 += cols[i];
     });
     doc.fillColor('black');
     rowY += 20;
 
     // ── Bonus log ──
     if (report.bonus_log.length > 0) {
-      if (rowY > 680) { doc.addPage(); rowY = 60; }
+      if (rowY > 700) { doc.addPage(); rowY = 50; }
       doc.y = rowY + 10;
-      doc.font('Helvetica-Bold').fontSize(9).text('Bonus Log');
-      doc.moveTo(50, doc.y + 2).lineTo(545, doc.y + 2).stroke();
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#333333').text('Bonus Log');
+      doc.moveDown(0.2);
+      doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor('#cccccc').stroke();
       doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(8);
+      doc.font('Helvetica').fontSize(8).fillColor('black');
       report.bonus_log.forEach((bt, idx) => {
-        if (doc.y > 720) doc.addPage();
-        const bg = idx % 2 === 1 ? '#f5f5f5' : 'white';
-        doc.rect(50, doc.y - 2, 495, 14).fillColor(bg).fill().fillColor('black');
-        doc.text(`${bt.nomor_bon}    ${bt.tanggal}    ${bt.customer_id.slice(0, 8)}...`, 50, doc.y);
+        if (doc.y > 730) doc.addPage();
+        if (idx % 2 === 1) {
+          doc.rect(50, doc.y - 2, 495, 13).fillColor('#f5f5f5').fill().fillColor('black');
+        }
+        doc.text(`${bt.nomor_bon}    ${bt.tanggal}    ${bt.customer_id.slice(0, 12)}...`, 55, doc.y);
         doc.moveDown(0.2);
       });
-    }
-
-    // ── Footer per halaman ──
-    const pages = doc.bufferedPageRange();
-    for (let i = 0; i < pages.count; i++) {
-      doc.switchToPage(i);
-      doc.fontSize(7).fillColor('#999999').text(`Halaman ${i + 1} dari ${pages.count}  ·  HL Sales & Receivables`, 50, 818, { align: 'center', width: 495 });
     }
 
     doc.end();
@@ -452,7 +453,7 @@ export async function generateCustomerActivityPdf(
   year: number
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -461,16 +462,18 @@ export async function generateCustomerActivityPdf(
     const periodLabel = `${MONTHS_ID[month - 1]} ${year}`;
 
     // ── Header ──
-    doc.rect(0, 0, doc.page.width, 80).fillColor('#0a0a0a').fill();
-    doc.fillColor('white').fontSize(18).font('Helvetica-Bold').text('HL Sales & Receivables', 50, 18);
-    doc.fontSize(10).font('Helvetica').text(`Aktivitas Pelanggan: ${customerName}  ·  ${periodLabel}`, 50, 44);
+    doc.rect(0, 0, doc.page.width, 75).fillColor('#111111').fill();
+    doc.fillColor('white').fontSize(16).font('Helvetica-Bold').text('HL Sales & Receivables', 50, 16);
+    doc.fontSize(10).font('Helvetica').text(`Aktivitas: ${customerName}  ·  ${periodLabel}`, 50, 40);
     doc.fillColor('black');
-    doc.moveDown(1.5);
+    doc.y = 90;
 
-    doc.fontSize(9).font('Helvetica').text(`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'right' });
+    doc.fontSize(8).font('Helvetica').fillColor('#888888')
+      .text(`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'right' });
+    doc.fillColor('black');
     doc.moveDown(0.5);
 
-    // ── Ringkasan ──
+    // ── Summary boxes ──
     const summaryY = doc.y;
     const boxW = 91;
     [
@@ -481,60 +484,42 @@ export async function generateCustomerActivityPdf(
       { label: 'Laba HL', value: formatCurrency(activity.total_laba_hl) },
     ].forEach((s, i) => {
       const bx = 50 + i * (boxW + 4);
-      doc.rect(bx, summaryY, boxW, 40).fillColor('#f0f0f0').fill();
-      doc.fillColor('#666666').fontSize(7).font('Helvetica').text(s.label, bx + 5, summaryY + 5, { width: boxW - 10 });
-      doc.fillColor('#1a1a1a').fontSize(8).font('Helvetica-Bold').text(s.value, bx + 5, summaryY + 19, { width: boxW - 10 });
+      doc.rect(bx, summaryY, boxW, 38).fillColor('#f2f2f2').fill();
+      doc.fillColor('#777777').fontSize(7).font('Helvetica').text(s.label, bx + 5, summaryY + 5, { width: boxW - 10 });
+      doc.fillColor('#111111').fontSize(8).font('Helvetica-Bold').text(s.value, bx + 5, summaryY + 17, { width: boxW - 10 });
     });
     doc.fillColor('black');
-    doc.y = summaryY + 52;
+    doc.y = summaryY + 48;
     doc.moveDown(0.5);
 
     // ── Tabel transaksi ──
-    const cols = [65, 90, 175, 65, 80];
+    const cols = [65, 90, 170, 65, 80];
     const headers = ['Tanggal', 'No. Bon', 'Item', 'Status', 'Tagihan'];
     let rowY = drawTableHeader(doc, doc.y, cols, headers);
 
     const txs = activity.transactions || [];
     txs.forEach((tx: any, idx: number) => {
-      if (rowY > 710) { doc.addPage(); rowY = 60; rowY = drawTableHeader(doc, rowY, cols, headers); }
+      if (rowY > 730) {
+        doc.addPage();
+        rowY = 50;
+        rowY = drawTableHeader(doc, rowY, cols, headers);
+      }
 
       const itemNames = (tx.items || []).map((item: any) => {
         const name = item.products?.name || `Produk ${item.product_id.slice(0, 6)}`;
         return `${name} ×${item.quantity}`;
       }).join(', ') || '—';
 
-      const statusText = tx.status + (tx.is_bonus ? ' (Bonus)' : '');
-
-      // Cek apakah baris item panjang — perlu tinggi lebih
-      const itemLineCount = Math.ceil(itemNames.length / 30);
-      const rowH = Math.max(16, itemLineCount * 10 + 6);
-
-      const shade = idx % 2 === 1;
-      if (shade) {
-        doc.rect(50, rowY - 2, 495, rowH).fillColor('#f5f5f5').fill();
-        doc.fillColor('black');
-      }
-
-      doc.font('Helvetica').fontSize(7.5);
-      let x = 50;
-      [tx.tanggal, tx.nomor_bon, itemNames, statusText, formatCurrency(tx.amount_owed)].forEach((v, i) => {
-        doc.text(String(v), x, rowY, { width: cols[i], align: i >= 3 ? 'right' : 'left', lineBreak: i === 2 });
-        x += cols[i];
-      });
-      rowY += rowH;
+      rowY = drawTableRow(doc, rowY, cols, [
+        tx.tanggal,
+        tx.nomor_bon,
+        itemNames,
+        tx.status + (tx.is_bonus ? ' (Bonus)' : ''),
+        formatCurrency(tx.amount_owed),
+      ], idx % 2 === 1);
     });
 
-    // Garis bawah tabel
-    doc.moveTo(50, rowY).lineTo(545, rowY).strokeColor('#cccccc').stroke();
-    doc.strokeColor('black');
-
-    // ── Footer per halaman ──
-    const pages = doc.bufferedPageRange();
-    for (let i = 0; i < pages.count; i++) {
-      doc.switchToPage(i);
-      doc.fontSize(7).fillColor('#999999').text(`Halaman ${i + 1} dari ${pages.count}  ·  HL Sales & Receivables  ·  ${customerName}`, 50, 818, { align: 'center', width: 495 });
-    }
-
+    doc.moveTo(50, rowY).lineTo(545, rowY).strokeColor('#aaaaaa').stroke();
     doc.end();
   });
 }
