@@ -294,114 +294,14 @@ async function buildOverallRecap(
   }];
 }
 
-// ─── PDF Export ────────────────────────────────────────────────
+// ─── PDF Export: Rekap Bulanan ────────────────────────────────
 
 import PDFDocument from 'pdfkit';
-import { PassThrough } from 'stream';
-
-export async function generateRecapPdf(report: RecapReport): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
-    const chunks: Buffer[] = [];
-
-    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    // Header
-    doc.fontSize(16).font('Helvetica-Bold')
-      .text('HL Sales & Receivables Management', { align: 'center' });
-    doc.fontSize(12).font('Helvetica')
-      .text(`Rekap ${report.type === 'customer' ? 'Pelanggan' : report.type === 'product' ? 'Produk' : 'Keseluruhan'}`, { align: 'center' });
-    doc.fontSize(10)
-      .text(`Periode: ${String(report.month).padStart(2, '0')}/${report.year}`, { align: 'center' });
-    doc.moveDown(1);
-
-    // Separator
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.5);
-
-    // Table header
-    const colWidths = [150, 80, 80, 80, 80];
-    const headers = ['Nama', 'Omzet', 'Laba HL', 'Piutang', 'Lunas'];
-    let x = 50;
-    doc.font('Helvetica-Bold').fontSize(9);
-    headers.forEach((h, i) => {
-      doc.text(h, x, doc.y, { width: colWidths[i], align: 'right' });
-      x += colWidths[i];
-    });
-    doc.moveDown(0.3);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.3);
-
-    // Table rows
-    doc.font('Helvetica').fontSize(8);
-    for (const entry of report.entries) {
-      x = 50;
-      const rowY = doc.y;
-      const rowData = [
-        entry.name,
-        formatCurrency(entry.total_omzet),
-        formatCurrency(entry.total_laba_hl),
-        formatCurrency(entry.total_piutang),
-        formatCurrency(entry.total_lunas),
-      ];
-      rowData.forEach((val, i) => {
-        doc.text(val, x, rowY, { width: colWidths[i], align: i === 0 ? 'left' : 'right' });
-        x += colWidths[i];
-      });
-      doc.moveDown(0.2);
-    }
-
-    doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.5);
-
-    // Bonus log
-    if (report.bonus_log.length > 0) {
-      doc.font('Helvetica-Bold').fontSize(10).text('Bonus Log');
-      doc.moveDown(0.3);
-      doc.font('Helvetica').fontSize(8);
-      for (const bt of report.bonus_log) {
-        doc.text(`Bon: ${bt.nomor_bon} | Tanggal: ${bt.tanggal} | Customer: ${bt.customer_id}`);
-      }
-      doc.moveDown(0.5);
-    }
-
-    // Totals
-    doc.font('Helvetica-Bold').fontSize(9);
-    doc.text(`Total Omzet: ${formatCurrency(report.totals.total_omzet)}`);
-    doc.text(`Total Laba HL: ${formatCurrency(report.totals.total_laba_hl)}`);
-    doc.text(`Total Piutang: ${formatCurrency(report.totals.total_piutang)}`);
-    doc.text(`Total Lunas: ${formatCurrency(report.totals.total_lunas)}`);
-
-    // Signature block
-    doc.moveDown(3);
-    doc.font('Helvetica').fontSize(9);
-    doc.text('Dibuat oleh: _________________________', 50);
-    doc.moveDown(1);
-    doc.text('Disetujui oleh: _________________________', 50);
-    doc.moveDown(1);
-    doc.text(`Tanggal: ${new Date().toLocaleDateString('id-ID')}`, 50);
-
-    doc.end();
-  });
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
 
 function enrichTx(tx: any, items: any[]): TransactionWithItems {
   const txOmzet = items.reduce((sum: D, item: any) => sum.plus(new D(item.line_omzet)), new D(0));
   const txLaba = items.reduce((sum: D, item: any) => sum.plus(new D(item.line_laba)), new D(0));
   const ongkir = new D(tx.ongkir);
-
   return {
     ...tx,
     items,
@@ -411,7 +311,233 @@ function enrichTx(tx: any, items: any[]): TransactionWithItems {
   };
 }
 
-// ─── Monthly Chart Data (6 bulan terakhir) ────────────────────
+const MONTHS_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+function formatCurrency(amount: number): string {
+  return 'Rp ' + new Intl.NumberFormat('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+}
+
+function drawTableHeader(doc: PDFKit.PDFDocument, y: number, cols: number[], headers: string[]) {
+  doc.font('Helvetica-Bold').fontSize(8);
+  let x = 50;
+  headers.forEach((h, i) => {
+    doc.text(h, x, y, { width: cols[i], align: i === 0 ? 'left' : 'right' });
+    x += cols[i];
+  });
+  const lineY = y + 14;
+  doc.moveTo(50, lineY).lineTo(545, lineY).strokeColor('#cccccc').stroke();
+  doc.strokeColor('black');
+  return lineY + 4;
+}
+
+function drawTableRow(doc: PDFKit.PDFDocument, y: number, cols: number[], values: string[], shade: boolean) {
+  if (shade) {
+    doc.rect(50, y - 2, 495, 16).fillColor('#f5f5f5').fill();
+    doc.fillColor('black');
+  }
+  doc.font('Helvetica').fontSize(8);
+  let x = 50;
+  values.forEach((v, i) => {
+    doc.text(v, x, y, { width: cols[i], align: i === 0 ? 'left' : 'right' });
+    x += cols[i];
+  });
+  return y + 16;
+}
+
+export async function generateRecapPdf(report: RecapReport): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const typeLabel = report.type === 'customer' ? 'Per Pelanggan' : report.type === 'product' ? 'Per Produk' : 'Keseluruhan';
+    const periodLabel = `${MONTHS_ID[report.month - 1]} ${report.year}`;
+
+    // ── Header ──
+    doc.rect(0, 0, doc.page.width, 80).fillColor('#0a0a0a').fill();
+    doc.fillColor('white').fontSize(18).font('Helvetica-Bold').text('HL Sales & Receivables', 50, 18);
+    doc.fontSize(10).font('Helvetica').text(`Rekap ${typeLabel}  ·  ${periodLabel}`, 50, 44);
+    doc.fillColor('black');
+    doc.moveDown(1.5);
+
+    // ── Info baris ──
+    doc.fontSize(9).font('Helvetica').text(`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'right' });
+    doc.moveDown(0.5);
+
+    // ── Ringkasan total ──
+    const totals = report.totals;
+    const summaryY = doc.y;
+    const boxW = 115;
+    [
+      { label: 'Total Omzet', value: formatCurrency(totals.total_omzet), color: '#1a1a1a' },
+      { label: 'Total Laba HL', value: formatCurrency(totals.total_laba_hl), color: '#1a1a1a' },
+      { label: 'Total Piutang', value: formatCurrency(totals.total_piutang), color: '#1a1a1a' },
+      { label: 'Total Lunas', value: formatCurrency(totals.total_lunas), color: '#1a1a1a' },
+    ].forEach((s, i) => {
+      const bx = 50 + i * (boxW + 5);
+      doc.rect(bx, summaryY, boxW, 40).fillColor('#f0f0f0').fill();
+      doc.fillColor('#666666').fontSize(7).font('Helvetica').text(s.label, bx + 6, summaryY + 6, { width: boxW - 12 });
+      doc.fillColor('#1a1a1a').fontSize(8.5).font('Helvetica-Bold').text(s.value, bx + 6, summaryY + 19, { width: boxW - 12 });
+    });
+    doc.fillColor('black');
+    doc.y = summaryY + 50;
+    doc.moveDown(0.5);
+
+    // ── Tabel utama ──
+    const cols = [160, 80, 80, 80, 80];
+    const headers = ['Nama', 'Omzet', 'Laba HL', 'Piutang', 'Lunas'];
+    let rowY = drawTableHeader(doc, doc.y, cols, headers);
+
+    report.entries.forEach((entry, idx) => {
+      if (rowY > 720) { doc.addPage(); rowY = 60; rowY = drawTableHeader(doc, rowY, cols, headers); }
+      rowY = drawTableRow(doc, rowY, cols, [
+        entry.name,
+        formatCurrency(entry.total_omzet),
+        formatCurrency(entry.total_laba_hl),
+        formatCurrency(entry.total_piutang),
+        formatCurrency(entry.total_lunas),
+      ], idx % 2 === 1);
+    });
+
+    // Total row
+    doc.moveTo(50, rowY).lineTo(545, rowY).strokeColor('#cccccc').stroke();
+    doc.strokeColor('black');
+    rowY += 4;
+    doc.rect(50, rowY - 2, 495, 16).fillColor('#0a0a0a').fill();
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(8);
+    let tx = 50;
+    ['TOTAL', formatCurrency(totals.total_omzet), formatCurrency(totals.total_laba_hl), formatCurrency(totals.total_piutang), formatCurrency(totals.total_lunas)].forEach((v, i) => {
+      doc.text(v, tx, rowY, { width: cols[i], align: i === 0 ? 'left' : 'right' });
+      tx += cols[i];
+    });
+    doc.fillColor('black');
+    rowY += 20;
+
+    // ── Bonus log ──
+    if (report.bonus_log.length > 0) {
+      if (rowY > 680) { doc.addPage(); rowY = 60; }
+      doc.y = rowY + 10;
+      doc.font('Helvetica-Bold').fontSize(9).text('Bonus Log');
+      doc.moveTo(50, doc.y + 2).lineTo(545, doc.y + 2).stroke();
+      doc.moveDown(0.3);
+      doc.font('Helvetica').fontSize(8);
+      report.bonus_log.forEach((bt, idx) => {
+        if (doc.y > 720) doc.addPage();
+        const bg = idx % 2 === 1 ? '#f5f5f5' : 'white';
+        doc.rect(50, doc.y - 2, 495, 14).fillColor(bg).fill().fillColor('black');
+        doc.text(`${bt.nomor_bon}    ${bt.tanggal}    ${bt.customer_id.slice(0, 8)}...`, 50, doc.y);
+        doc.moveDown(0.2);
+      });
+    }
+
+    // ── Footer per halaman ──
+    const pages = doc.bufferedPageRange();
+    for (let i = 0; i < pages.count; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(7).fillColor('#999999').text(`Halaman ${i + 1} dari ${pages.count}  ·  HL Sales & Receivables`, 50, 818, { align: 'center', width: 495 });
+    }
+
+    doc.end();
+  });
+}
+
+// ─── PDF Export: Customer Activity Per Bulan ─────────────────
+
+export async function generateCustomerActivityPdf(
+  activity: any,
+  customerName: string,
+  month: number,
+  year: number
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const periodLabel = `${MONTHS_ID[month - 1]} ${year}`;
+
+    // ── Header ──
+    doc.rect(0, 0, doc.page.width, 80).fillColor('#0a0a0a').fill();
+    doc.fillColor('white').fontSize(18).font('Helvetica-Bold').text('HL Sales & Receivables', 50, 18);
+    doc.fontSize(10).font('Helvetica').text(`Aktivitas Pelanggan: ${customerName}  ·  ${periodLabel}`, 50, 44);
+    doc.fillColor('black');
+    doc.moveDown(1.5);
+
+    doc.fontSize(9).font('Helvetica').text(`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'right' });
+    doc.moveDown(0.5);
+
+    // ── Ringkasan ──
+    const summaryY = doc.y;
+    const boxW = 91;
+    [
+      { label: 'Piutang', value: formatCurrency(activity.total_piutang) },
+      { label: 'Lunas', value: formatCurrency(activity.total_lunas) },
+      { label: 'Omzet LM', value: formatCurrency(activity.total_omzet_lm) },
+      { label: 'Omzet BR', value: formatCurrency(activity.total_omzet_br) },
+      { label: 'Laba HL', value: formatCurrency(activity.total_laba_hl) },
+    ].forEach((s, i) => {
+      const bx = 50 + i * (boxW + 4);
+      doc.rect(bx, summaryY, boxW, 40).fillColor('#f0f0f0').fill();
+      doc.fillColor('#666666').fontSize(7).font('Helvetica').text(s.label, bx + 5, summaryY + 5, { width: boxW - 10 });
+      doc.fillColor('#1a1a1a').fontSize(8).font('Helvetica-Bold').text(s.value, bx + 5, summaryY + 19, { width: boxW - 10 });
+    });
+    doc.fillColor('black');
+    doc.y = summaryY + 52;
+    doc.moveDown(0.5);
+
+    // ── Tabel transaksi ──
+    const cols = [65, 90, 175, 65, 80];
+    const headers = ['Tanggal', 'No. Bon', 'Item', 'Status', 'Tagihan'];
+    let rowY = drawTableHeader(doc, doc.y, cols, headers);
+
+    const txs = activity.transactions || [];
+    txs.forEach((tx: any, idx: number) => {
+      if (rowY > 710) { doc.addPage(); rowY = 60; rowY = drawTableHeader(doc, rowY, cols, headers); }
+
+      const itemNames = (tx.items || []).map((item: any) => {
+        const name = item.products?.name || `Produk ${item.product_id.slice(0, 6)}`;
+        return `${name} ×${item.quantity}`;
+      }).join(', ') || '—';
+
+      const statusText = tx.status + (tx.is_bonus ? ' (Bonus)' : '');
+
+      // Cek apakah baris item panjang — perlu tinggi lebih
+      const itemLineCount = Math.ceil(itemNames.length / 30);
+      const rowH = Math.max(16, itemLineCount * 10 + 6);
+
+      const shade = idx % 2 === 1;
+      if (shade) {
+        doc.rect(50, rowY - 2, 495, rowH).fillColor('#f5f5f5').fill();
+        doc.fillColor('black');
+      }
+
+      doc.font('Helvetica').fontSize(7.5);
+      let x = 50;
+      [tx.tanggal, tx.nomor_bon, itemNames, statusText, formatCurrency(tx.amount_owed)].forEach((v, i) => {
+        doc.text(String(v), x, rowY, { width: cols[i], align: i >= 3 ? 'right' : 'left', lineBreak: i === 2 });
+        x += cols[i];
+      });
+      rowY += rowH;
+    });
+
+    // Garis bawah tabel
+    doc.moveTo(50, rowY).lineTo(545, rowY).strokeColor('#cccccc').stroke();
+    doc.strokeColor('black');
+
+    // ── Footer per halaman ──
+    const pages = doc.bufferedPageRange();
+    for (let i = 0; i < pages.count; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(7).fillColor('#999999').text(`Halaman ${i + 1} dari ${pages.count}  ·  HL Sales & Receivables  ·  ${customerName}`, 50, 818, { align: 'center', width: 495 });
+    }
+
+    doc.end();
+  });
+}
 
 export interface MonthlyChartPoint {
   month: number;
@@ -472,86 +598,4 @@ export async function getMonthlyChartData(): Promise<MonthlyChartPoint[]> {
   }
 
   return result;
-}
-
-// ─── PDF Export: Customer Activity Per Bulan ─────────────────
-
-export async function generateCustomerActivityPdf(
-  activity: any,
-  customerName: string,
-  month: number,
-  year: number
-): Promise<Buffer> {
-  const months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
-
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
-    const chunks: Buffer[] = [];
-    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
-    doc.on('error', reject);
-
-    // Header
-    doc.fontSize(16).font('Helvetica-Bold').text('HL Sales & Receivables Management', { align: 'center' });
-    doc.fontSize(12).font('Helvetica').text(`Daftar Transaksi — ${customerName}`, { align: 'center' });
-    doc.fontSize(10).text(`Periode: ${months[month - 1]} ${year}`, { align: 'center' });
-    doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.5);
-
-    // Summary
-    doc.font('Helvetica-Bold').fontSize(9);
-    doc.text(`Total Piutang  : ${formatCurrency(activity.total_piutang)}`);
-    doc.text(`Total Lunas    : ${formatCurrency(activity.total_lunas)}`);
-    doc.text(`Omzet LM       : ${formatCurrency(activity.total_omzet_lm)}`);
-    doc.text(`Omzet BR       : ${formatCurrency(activity.total_omzet_br)}`);
-    doc.text(`Laba HL        : ${formatCurrency(activity.total_laba_hl)}`);
-    doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.5);
-
-    // Transaction table header
-    const cols = [60, 80, 180, 80, 80];
-    const headers2 = ['Tanggal', 'No. Bon', 'Item', 'Status', 'Tagihan'];
-    let x = 50;
-    doc.font('Helvetica-Bold').fontSize(8);
-    headers2.forEach((h, i) => {
-      doc.text(h, x, doc.y, { width: cols[i], align: i >= 3 ? 'right' : 'left' });
-      x += cols[i];
-    });
-    doc.moveDown(0.3);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.3);
-
-    // Rows
-    doc.font('Helvetica').fontSize(7.5);
-    for (const tx of activity.transactions || []) {
-      const itemNames = (tx.items || []).map((item: any) => {
-        const name = item.products?.name || item.product_id.slice(0, 8);
-        return `${name} ×${item.quantity}`;
-      }).join(', ');
-
-      const rowY = doc.y;
-      x = 50;
-      const rowData = [
-        tx.tanggal,
-        tx.nomor_bon,
-        itemNames || '-',
-        tx.status + (tx.is_bonus ? ' (Bonus)' : ''),
-        formatCurrency(tx.amount_owed),
-      ];
-      rowData.forEach((val, i) => {
-        doc.text(String(val), x, rowY, { width: cols[i], align: i >= 3 ? 'right' : 'left' });
-        x += cols[i];
-      });
-      doc.moveDown(0.3);
-    }
-
-    doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-    doc.moveDown(0.5);
-    doc.font('Helvetica').fontSize(8).text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')}`, { align: 'right' });
-
-    doc.end();
-  });
 }
